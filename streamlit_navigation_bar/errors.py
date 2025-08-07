@@ -49,12 +49,50 @@ def check_pages(pages):
         )
 
     for page in pages:
-        if not isinstance(page, (str, Page)):
+        if isinstance(page, dict):
+            # Validate multilevel menu structure
+            if "title" not in page:
+                i = pages.index(page)
+                raise StreamlitAPIException(
+                    "The pages parameter from st_navbar() received a dictionary "
+                    "item without a required 'title' key.\n"
+                    f"\nExpected: pages[{i}] to have 'title' key  "
+                    f"\nGot: {list(page.keys())}"
+                )
+            if "submenu" in page:
+                if not isinstance(page["submenu"], list):
+                    i = pages.index(page)
+                    raise StreamlitAPIException(
+                        "The pages parameter from st_navbar() received a dictionary "
+                        "with 'submenu' that is not a list.\n"
+                        f"\nExpected: *type*(pages[{i}]['submenu']) == *list*  "
+                        f"\nGot: *type*(pages[{i}]['submenu']) == *{type(page['submenu']).__name__}*"
+                    )
+                for sub_item in page["submenu"]:
+                    if not isinstance(sub_item, (str, dict)):
+                        i = pages.index(page)
+                        j = page["submenu"].index(sub_item)
+                        raise StreamlitAPIException(
+                            "The pages parameter from st_navbar() received a submenu "
+                            "item with an invalid type.\n"
+                            f"\nExpected: *type*(pages[{i}]['submenu'][{j}]) == *str* or *dict*  "
+                            f"\nGot: *type*(pages[{i}]['submenu'][{j}]) == *{type(sub_item).__name__}*"
+                        )
+                    if isinstance(sub_item, dict) and "title" not in sub_item:
+                        i = pages.index(page)
+                        j = page["submenu"].index(sub_item)
+                        raise StreamlitAPIException(
+                            "The pages parameter from st_navbar() received a submenu "
+                            "dictionary without a required 'title' key.\n"
+                            f"\nExpected: pages[{i}]['submenu'][{j}] to have 'title' key  "
+                            f"\nGot: {list(sub_item.keys())}"
+                        )
+        elif not isinstance(page, (str, Page)):
             i = pages.index(page)
             raise StreamlitAPIException(
                 "The pages parameter from st_navbar() received a list that "
                 "has an item with an invalid type.\n"
-                f"\nExpected: *type*(pages[{i}]) == *str*  "
+                f"\nExpected: *type*(pages[{i}]) == *str*, *dict*, or *Page*  "
                 f"\nGot: *type*(pages[{i}]) == *{type(page).__name__}*"
             )
 
