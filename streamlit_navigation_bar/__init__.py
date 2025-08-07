@@ -75,12 +75,24 @@ def _prepare_urls(urls, pages):
     if urls is None:
         urls = {}
     for page in pages:
+        page_name = page if isinstance(page, str) else page.get("title", page)
         # Add {page: [href, target]} to the `urls` dict.
-        if page in urls:
-            urls[page] = [urls[page], "_blank"]
+        if page_name in urls:
+            urls[page_name] = [urls[page_name], "_blank"]
         else:
-            urls[page] = ["#", "_self"]
+            urls[page_name] = ["#", "_self"]
     return urls
+
+
+def _process_single_icon(icon_str):
+    """Process a single icon string to extract the icon name."""
+    if not icon_str or not isinstance(icon_str, str):
+        return None
+    # Strip colons and extract icon name from ":material/icon_name:" -> "icon_name"
+    clean_icon = icon_str.strip(":")
+    if "/" in clean_icon:
+        clean_icon = clean_icon.split("/")[-1]
+    return clean_icon
 
 
 def _prepare_icons(icons):
@@ -88,11 +100,59 @@ def _prepare_icons(icons):
         icons = {}
 
     icons = {
-        k: v.strip(":").split("/")[-1].replace("_", " ").title().replace(" ", "")
+        k: _process_single_icon(v)
         for k, v in icons.items()
     }
 
     return icons
+
+
+def _prepare_multilevel_pages(pages):
+    """Convert pages to multilevel structure, supporting both flat lists and nested dicts."""
+    if not pages:
+        return []
+
+    multilevel_pages = []
+
+    for page in pages:
+        if isinstance(page, dict):
+            # Handle nested menu structure: {"title": "Menu", "submenu": ["Item1", "Item2"], "icon": "icon"}
+            if "submenu" in page and page["submenu"]:
+                multilevel_pages.append({
+                    "title": page["title"],
+                    "icon": _process_single_icon(page.get("icon")),
+                    "url": page.get("url", ["#", "_self"]),
+                    "key": page["title"].lower(),
+                    "submenu": [
+                        {
+                            "title": sub_item if isinstance(sub_item, str) else sub_item.get("title", ""),
+                            "icon": "▹  " + _process_single_icon(sub_item.get("icon")) if isinstance(sub_item, dict) and sub_item.get("icon") else "▹  ",
+                            "url": sub_item.get("url", ["#", "_self"]) if isinstance(sub_item, dict) else ["#", "_self"],
+                            "key": (sub_item if isinstance(sub_item, str) else sub_item.get("title", "")).lower()
+                        }
+                        for sub_item in page["submenu"]
+                    ]
+                })
+            else:
+                # Regular menu item in dict format
+                multilevel_pages.append({
+                    "title": page["title"],
+                    "icon": _process_single_icon(page.get("icon")),
+                    "url": page.get("url", ["#", "_self"]),
+                    "key": page["title"].lower(),
+                    "submenu": None
+                })
+        else:
+            # Handle backward compatibility with string/StreamlitPage
+            multilevel_pages.append({
+                "title": page if isinstance(page, str) else page.title,
+                "icon": None,
+                "url": ["#", "_self"],
+                "key": (page if isinstance(page, str) else page.title).lower(),
+                "submenu": None
+            })
+
+    return multilevel_pages
 
 
 def _prepare_options(options):
@@ -308,9 +368,18 @@ def st_navbar(
 
     Parameters
     ----------
-    pages : list of str
+    pages : list of str or dict
         A list with the name of each page that will be displayed in the
-        navigation bar.
+        navigation bar. Can be strings for simple pages or dictionaries
+        for multilevel menus. Multilevel menu format:
+        {
+            "title": "Menu Name",
+            "icon": ":material/icon_name:",  # Optional
+            "submenu": [
+                "Submenu Item 1",  # Simple string
+                {"title": "Submenu Item 2", "icon": ":material/icon:"}  # Dict with options
+            ]
+        }
     right : list of str
         A list with the name of each page that will be displayed in the
         right part of the navigation bar.
@@ -464,7 +533,18 @@ def st_navbar(
 
     if icons is None:
         icons = {}
-    icons = {k: v.strip(":").split("/")[-1] for k, v in icons.items()}
+    # Properly process material icons format ":material/icon_name:" -> "icon_name"
+    processed_icons = {}
+    for k, v in icons.items():
+        if isinstance(v, str):
+            # Strip colons and extract icon name
+            clean_icon = v.strip(":")
+            if "/" in clean_icon:
+                clean_icon = clean_icon.split("/")[-1]
+            processed_icons[k] = clean_icon
+        else:
+            processed_icons[k] = v
+    icons = processed_icons
 
     page_objects = {}
     page_list = []
@@ -481,9 +561,56 @@ def st_navbar(
         )
         page_list.append(st_page)
 
-    # TODO: code here is weird
+    # Convert to multilevel structure supporting nested menus
     def to_dict(page):
-        if isinstance(page, StreamlitPage):
+        if isinstance(page, dict) and "submenu" in page and page["submenu"]:
+            # Handle multilevel menu item
+            st_page = st.Page(
+                lambda: None,
+                title=page["title"],
+                url_path=page["key"],
+            )
+            page_list.append(st_page)
+
+            # Process submenu items
+            submenu_items = []
+            for sub_item in page["submenu"]:
+                sub_st_page = st.Page(
+                    lambda: None,
+                    title=sub_item["title"],
+                    url_path=sub_item["key"],
+                )
+                page_list.append(sub_st_page)
+                submenu_items.append({
+                    "title": sub_item["title"],
+                    "icon": sub_item["icon"] or icons.get(sub_item["title"]),
+                    "url": sub_item["url"],
+                    "key": sub_item["key"],
+                })
+
+            return {
+                "title": page["title"],
+                "icon": page["icon"] or icons.get(page["title"]),
+                "url": page["url"],
+                "key": page["key"],
+                "submenu": submenu_items,
+            }
+        elif isinstance(page, dict):
+            # Handle single level dict item
+            st_page = st.Page(
+                lambda: None,
+                title=page["title"],
+                url_path=page["key"],
+            )
+            page_list.append(st_page)
+            return {
+                "title": page["title"],
+                "icon": page["icon"] or icons.get(page["title"]),
+                "url": page["url"],
+                "key": page["key"],
+                "submenu": None,
+            }
+        elif isinstance(page, StreamlitPage):
             page._default = False
             page_objects[page.url_path] = page
             page_list.append(page)
@@ -492,8 +619,10 @@ def st_navbar(
                 "icon": page.icon or None,
                 "url": urls.get(page.title, ["#", "_self"]),
                 "key": page.url_path,
+                "submenu": None,
             }
         else:
+            # Handle string page (backward compatibility)
             st_page = st.Page(
                 lambda: None,
                 title=page,
@@ -505,10 +634,15 @@ def st_navbar(
                 "icon": icons.get(page),
                 "url": urls.get(page, ["#", "_self"]),
                 "key": page.lower(),
+                "submenu": None,
             }
 
-    left = [to_dict(title) for title in left]
-    right = [to_dict(title) for title in right]
+    # Process multilevel structure first
+    left_multilevel = _prepare_multilevel_pages(left)
+    right_multilevel = _prepare_multilevel_pages(right)
+
+    left = [to_dict(title) for title in left_multilevel]
+    right = [to_dict(title) for title in right_multilevel]
 
     default_page = next(page for page in page_list if default == page.url_path)
     default_page_original_key = default_page.url_path
